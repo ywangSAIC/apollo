@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <limits>
 #include <string>
+#include <utility>
 
 #include "modules/common/proto/pnc_point.pb.h"
 
@@ -37,8 +38,8 @@ namespace planning {
 using apollo::common::ErrorCode;
 using apollo::common::SpeedPoint;
 using apollo::common::Status;
-using apollo::common::math::Vec2d;
 using apollo::common::VehicleParam;
+using apollo::common::math::Vec2d;
 
 namespace {
 constexpr double kInf = std::numeric_limits<double>::infinity();
@@ -47,6 +48,9 @@ bool CheckOverlapOnDpStGraph(const std::vector<const StBoundary*>& boundaries,
                              const StGraphPoint& p1, const StGraphPoint& p2) {
   const common::math::LineSegment2d seg(p1.point(), p2.point());
   for (const auto* boundary : boundaries) {
+    if (boundary->boundary_type() == StBoundary::BoundaryType::KEEP_CLEAR) {
+      continue;
+    }
     if (boundary->HasOverlap(seg)) {
       return true;
     }
@@ -69,11 +73,18 @@ DpStGraph::DpStGraph(const StGraphData& st_graph_data,
   dp_st_speed_config_.set_total_path_length(
       std::fmin(dp_st_speed_config_.total_path_length(),
                 st_graph_data_.path_data_length()));
+  unit_s_ = dp_st_speed_config_.total_path_length() /
+            (dp_st_speed_config_.matrix_dimension_s() - 1);
+  unit_t_ = dp_st_speed_config_.total_time() /
+            (dp_st_speed_config_.matrix_dimension_t() - 1);
 }
 
 Status DpStGraph::Search(SpeedData* const speed_data) {
   constexpr double kBounadryEpsilon = 1e-2;
   for (const auto& boundary : st_graph_data_.st_boundaries()) {
+    if (boundary->boundary_type() == StBoundary::BoundaryType::KEEP_CLEAR) {
+      continue;
+    }
     if (boundary->IsPointInBoundary({0.0, 0.0}) ||
         (std::fabs(boundary->min_t()) < kBounadryEpsilon &&
          std::fabs(boundary->min_s()) < kBounadryEpsilon)) {
@@ -102,9 +113,12 @@ Status DpStGraph::Search(SpeedData* const speed_data) {
       SpeedPoint speed_point;
       speed_point.set_s(s);
       speed_point.set_t(t);
-      speed_profile.emplace_back(speed_point);
+      const double v_default = unit_s_ / unit_t_;
+      speed_point.set_v(v_default);
+      speed_point.set_a(0.0);
+      speed_profile.emplace_back(std::move(speed_point));
     }
-    speed_data->set_speed_vector(speed_profile);
+    speed_data->set_speed_vector(std::move(speed_profile));
     return Status::OK();
   }
 
@@ -131,9 +145,6 @@ Status DpStGraph::Search(SpeedData* const speed_data) {
 Status DpStGraph::InitCostTable() {
   uint32_t dim_s = dp_st_speed_config_.matrix_dimension_s();
   uint32_t dim_t = dp_st_speed_config_.matrix_dimension_t();
-  unit_s_ = dp_st_speed_config_.total_path_length() / dim_s;
-  unit_t_ = dp_st_speed_config_.total_time() /
-            dp_st_speed_config_.matrix_dimension_t();
   DCHECK_GT(dim_s, 2);
   DCHECK_GT(dim_t, 2);
   cost_table_ = std::vector<std::vector<StGraphPoint>>(
@@ -151,14 +162,15 @@ Status DpStGraph::InitCostTable() {
 }
 
 Status DpStGraph::CalculateTotalCost() {
+  // col and row are for STGraph
   // t corresponding to col
   // s corresponding to row
   uint32_t next_highest_row = 0;
   uint32_t next_lowest_row = 0;
 
   for (size_t c = 0; c < cost_table_.size(); ++c) {
-    uint32_t highest_row = 0;
-    uint32_t lowest_row = cost_table_.back().size() - 1;
+    int highest_row = 0;
+    int lowest_row = cost_table_.back().size() - 1;
 
     for (uint32_t r = next_lowest_row; r <= next_highest_row; ++r) {
       if (FLAGS_enable_multi_thread_in_dp_st_graph) {
@@ -174,24 +186,23 @@ Status DpStGraph::CalculateTotalCost() {
 
     for (uint32_t r = next_lowest_row; r <= next_highest_row; ++r) {
       const auto& cost_cr = cost_table_[c][r];
-      uint32_t h_r = 0;
-      uint32_t l_r = 0;
       if (cost_cr.total_cost() < std::numeric_limits<double>::infinity()) {
+        int h_r = 0;
+        int l_r = 0;
         GetRowRange(cost_cr, &h_r, &l_r);
         highest_row = std::max(highest_row, h_r);
         lowest_row = std::min(lowest_row, l_r);
       }
     }
     next_highest_row = highest_row;
-    next_lowest_row = std::max(next_lowest_row, lowest_row);
+    next_lowest_row = lowest_row;
   }
 
   return Status::OK();
 }
 
-void DpStGraph::GetRowRange(const StGraphPoint& point,
-                            uint32_t* next_highest_row,
-                            uint32_t* next_lowest_row) {
+void DpStGraph::GetRowRange(const StGraphPoint& point, int* next_highest_row,
+                            int* next_lowest_row) {
   double v0 = 0.0;
   if (!point.pre_point()) {
     v0 = init_point_.v();
@@ -199,23 +210,26 @@ void DpStGraph::GetRowRange(const StGraphPoint& point,
     v0 = (point.index_s() - point.pre_point()->index_s()) * unit_s_ / unit_t_;
   }
 
-  const size_t max_s_size = cost_table_.back().size() - 1;
+  const int max_s_size = cost_table_.back().size() - 1;
 
   const double speed_coeff = unit_t_ * unit_t_;
 
   const double delta_s_upper_bound =
       v0 * unit_t_ + vehicle_param_.max_acceleration() * speed_coeff;
   *next_highest_row =
-      point.index_s() + static_cast<uint32_t>(delta_s_upper_bound / unit_s_);
+      point.index_s() + static_cast<int>(delta_s_upper_bound / unit_s_);
   if (*next_highest_row >= max_s_size) {
     *next_highest_row = max_s_size;
   }
 
   const double delta_s_lower_bound = std::fmax(
       0.0, v0 * unit_t_ + vehicle_param_.max_deceleration() * speed_coeff);
-  *next_lowest_row += static_cast<int32_t>(delta_s_lower_bound / unit_s_);
+  *next_lowest_row =
+      point.index_s() - static_cast<int>(delta_s_lower_bound / unit_s_);
   if (*next_lowest_row > max_s_size) {
     *next_lowest_row = max_s_size;
+  } else if (*next_lowest_row < 0) {
+    *next_lowest_row = 0;
   }
 }
 

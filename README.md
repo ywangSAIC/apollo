@@ -1,6 +1,6 @@
 # Apollo
 
-[![Build Status](https://travis-ci.org/ApolloAuto/apollo.svg?branch=master)](https://travis-ci.org/ApolloAuto/apollo)
+[![Build Status](https://travis-ci.org/ApolloAuto/apollo.svg?branch=master)](https://travis-ci.org/ApolloAuto/apollo) [![Simulation Status](https://azure.apollo.auto/dailybuildstatus.svg)](https://azure.apollo.auto/dailybuild)
 
 ```
 We choose to go to the moon in this decade and do the other things,
@@ -13,7 +13,7 @@ Welcome to the Apollo GitHub.
 [Apollo](http://apollo.auto) is an open autonomous driving platform. It is a high performance flexible architecture which supports fully autonomous driving capabilities.
 For business contact, please visit http://apollo.auto
 
-**Apollo Team now proudly presents to you the latest [version 2.0](https://github.com/ApolloAuto/apollo/releases/tag/v2.0.0).**
+**Apollo Team now proudly presents to you the latest [version 2.5](https://github.com/ApolloAuto/apollo/releases/tag/v2.5.0).**
 
 ## Installation
 
@@ -31,23 +31,20 @@ More instructions are below
 
 ### The docker environment can be set by the commands below.
 
-Running a docker container from a linux system is done with this sequence. At the end, the `dev_into.sh` 
-script will get you into the container
+First, you need to [install docker-ce properly](https://github.com/ApolloAuto/apollo/blob/master/docker/scripts/README.md#install-docker).
+The following scripts will get you into the container
 
 ```
-bash docker/scripts/install_docker.sh
-# logout and login back in the system to make sure to run docker command without sudo
 docker ps  # to verify docker works without sudo
-# in case you forgot to logout and login back, do so, remove ~/.docker/config.json
-# and check again with `docker ps`
 bash docker/scripts/dev_start.sh
+# if in China, you had better use:bash docker/scripts/dev_start.sh -C to download from the server of docker in china.
 bash docker/scripts/dev_into.sh
 
 ```
 
 ### To build from source
-Now you will need to build from the source. If you want to run the entire system, make sure you have an 
-nVidia GPU and that you have installed the Linux nVidia drivers. 
+First check and make sure you are in development docker container before you proceed. Now you will need to build from the source. If you want to run the entire system, make sure you have an
+nVidia GPU and that you have installed the Linux nVidia drivers.
 
 ```
 # To get a list of build commands
@@ -58,25 +55,25 @@ nVidia GPU and that you have installed the Linux nVidia drivers.
 bash apollo.sh build
 ```
 
-If you do not have an nVidia GPU, the system will run but with the CUDA-based perception and other modules. You must 
+If you do not have an nVidia GPU, the system will run but with the CUDA-based perception and other modules. You must
 specify either `dbg` for debug mode or `opt` for optimized code
 
 ```
 ./apollo.sh build_no_perception dbg
 ```
 
-If you make modifications to the Dreamview frontend, then you must run `./apollo.sh build_fe`  before you run the 
+If you make modifications to the Dreamview frontend, then you must run `./apollo.sh build_fe`  before you run the
 full build.
 
 
 ## Run Apollo
 
-Follow the steps below to launch Apollo. Note that you must build the system first before you run it. Note that the 
+Follow the steps below to launch Apollo. Note that you must build the system first before you run it. Note that the
 bootstrap.sh will actually succeed but the user interface will not come up if you skip the build step.
 
 ### Start Apollo
 
-Running Apollo will start the ROS core and then startup a web user interface called Dreamview, this is handled by 
+Running Apollo will start the ROS core and then startup a web user interface called Dreamview, this is handled by
 the bootstrap script, so from within the docker container, you should run:
 
 ```
@@ -88,8 +85,12 @@ bash scripts/bootstrap.sh
 Access Dreamview by opening your favorite browser, e.g. Chrome, go to http://localhost:8888 and you should see this screen
 However, there will be nothing running in the system.
 
-
 ![Access Dreamview](docs/demo_guide/images/apollo_bootstrap_screen.png)
+
+### Select Drive Mode
+From the dropdown box selet "Navigation" mode.
+
+![Navigation Mode](docs/demo_guide/images/dreamview_2_5_setup_profile.png)
 
 
 ### Replay demo rosbag
@@ -101,12 +102,12 @@ To see if the system works, use the demo 'bag' which feeds the system.
 bash ./docs/demo_guide/rosbag_helper.sh download
 
 # You can now replay this demo "bag" in a loop with the '-l' flag
-rosbag play -l ./docs/demo_guide/demo_2.0.bag
+rosbag play -l ./docs/demo_guide/demo_2.5.bag
 ```
 
 Dreamview should show a running vehicle now. (The following image might be different due to changes in frontend.)
 
-![Dreamview with Trajectory](docs/demo_guide/images/dv_trajectory.png)
+![Dreamview with Trajectory](docs/demo_guide/images/dv_trajectory_2.5.png)
 
 ## Documents
 

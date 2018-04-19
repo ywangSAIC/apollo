@@ -82,9 +82,6 @@ class Prediction : public PredictionInterface {
 
   void OnPlanning(const planning::ADCTrajectory &adc_trajectory);
 
-  bool IsValidTrajectoryPoint(
-      const ::apollo::common::TrajectoryPoint &trajectory_point);
-
  private:
   double start_time_ = 0.0;
   PredictionConf prediction_conf_;

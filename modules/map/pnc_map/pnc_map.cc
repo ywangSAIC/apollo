@@ -42,10 +42,10 @@
 namespace apollo {
 namespace hdmap {
 
-using apollo::routing::RoutingResponse;
+using apollo::common::PointENU;
 using apollo::common::VehicleState;
 using apollo::common::math::Vec2d;
-using apollo::common::PointENU;
+using apollo::routing::RoutingResponse;
 using common::util::MakePointENU;
 
 namespace {
@@ -55,19 +55,6 @@ const double kDuplicatedPointsEpsilon = 1e-7;
 
 // Maximum lateral error used in trajectory approximation.
 const double kTrajectoryApproximationMaxError = 2.0;
-
-void RemoveDuplicates(std::vector<Vec2d> *points) {
-  CHECK_NOTNULL(points);
-  int count = 0;
-  const double limit = kDuplicatedPointsEpsilon * kDuplicatedPointsEpsilon;
-  for (size_t i = 0; i < points->size(); ++i) {
-    if (count == 0 ||
-        (*points)[i].DistanceSquareTo((*points)[count - 1]) > limit) {
-      (*points)[count++] = (*points)[i];
-    }
-  }
-  points->resize(count);
-}
 
 void RemoveDuplicates(std::vector<MapPathPoint> *points) {
   CHECK_NOTNULL(points);
@@ -93,22 +80,14 @@ const hdmap::HDMap *PncMap::hdmap() const { return hdmap_; }
 LaneWaypoint PncMap::ToLaneWaypoint(
     const routing::LaneWaypoint &waypoint) const {
   auto lane = hdmap_->GetLaneById(hdmap::MakeMapId(waypoint.id()));
-  if (lane) {
-    return LaneWaypoint(lane, waypoint.s());
-  } else {
-    AERROR << "Invalid waypoint lane id: " << waypoint.id();
-    return LaneWaypoint();
-  }
+  CHECK(lane) << "invalid lane id: " << waypoint.id();
+  return LaneWaypoint(lane, waypoint.s());
 }
 
 LaneSegment PncMap::ToLaneSegment(const routing::LaneSegment &segment) const {
   auto lane = hdmap_->GetLaneById(hdmap::MakeMapId(segment.id()));
-  if (lane) {
-    return LaneSegment(lane, segment.start_s(), segment.end_s());
-  } else {
-    AERROR << "Invalid waypoint lane id: " << segment.id();
-    return LaneSegment();
-  }
+  CHECK(lane) << "invalid lane id: " << segment.id();
+  return LaneSegment(lane, segment.start_s(), segment.end_s());
 }
 
 void PncMap::UpdateNextRoutingWaypointIndex(int cur_index) {
@@ -161,6 +140,11 @@ std::vector<routing::LaneWaypoint> PncMap::FutureRouteWaypoints() const {
 
 void PncMap::UpdateRoutingRange(int adc_index) {
   // track routing range.
+  if (range_start_ > adc_index || range_end_ < adc_index) {
+    range_lane_ids_.clear();
+    range_start_ = std::max(0, adc_index - 1);
+    range_end_ = range_start_;
+  }
   while (range_start_ + 1 < adc_index) {
     range_lane_ids_.erase(route_indices_[range_start_].segment.lane->id().id());
     ++range_start_;
@@ -210,6 +194,11 @@ bool PncMap::UpdateVehicleState(const VehicleState &vehicle_state) {
   adc_route_index_ = route_index;
   UpdateRoutingRange(adc_route_index_);
 
+  if (routing_waypoint_index_.empty()) {
+    AERROR << "No routing waypoint index";
+    return false;
+  }
+
   int last_index = GetWaypointIndex(routing_waypoint_index_.back().waypoint);
   if (next_routing_waypoint_index_ == routing_waypoint_index_.size() - 1 ||
       (!stop_for_destination_ &&
@@ -226,21 +215,10 @@ bool PncMap::IsNewRouting(const routing::RoutingResponse &routing) const {
 bool PncMap::IsNewRouting(const routing::RoutingResponse &prev,
                           const routing::RoutingResponse &routing) {
   if (!ValidateRouting(routing)) {
-    AERROR << "The provided routing is invalid";
+    ADEBUG << "The provided routing is invalid";
     return false;
   }
-  if (!prev.has_header()) {
-    AERROR << "Current routing is empty, use new routing";
-    return true;
-  }
-  if (prev.has_header() && routing.has_header() &&
-      prev.header().sequence_num() == routing.header().sequence_num() &&
-      (std::fabs(prev.header().timestamp_sec() -
-                 routing.header().timestamp_sec()) < 0.1)) {
-    ADEBUG << "Same routing, skip update routing";
-    return false;
-  }
-  return true;
+  return !common::util::IsProtoEqual(prev, routing);
 }
 
 bool PncMap::UpdateRoutingResponse(const routing::RoutingResponse &routing) {
@@ -258,6 +236,10 @@ bool PncMap::UpdateRoutingResponse(const routing::RoutingResponse &routing) {
         route_indices_.emplace_back();
         route_indices_.back().segment =
             ToLaneSegment(passage.segment(lane_index));
+        if (route_indices_.back().segment.lane == nullptr) {
+          AERROR << "Fail to get lane segment from passage.";
+          return false;
+        }
         route_indices_.back().index = {road_index, passage_index, lane_index};
       }
     }
@@ -272,6 +254,10 @@ bool PncMap::UpdateRoutingResponse(const routing::RoutingResponse &routing) {
   routing_waypoint_index_.clear();
   int i = 0;
   const auto &request_waypoints = routing.routing_request().waypoint();
+  if (request_waypoints.empty()) {
+    AERROR << "Invalid routing: no request waypoints";
+    return false;
+  }
   for (std::size_t j = 0; j < route_indices_.size(); ++j) {
     while (i < request_waypoints.size() &&
            RouteSegments::WithinLaneSegment(route_indices_[j].segment,

@@ -21,8 +21,8 @@
 #ifndef MODULES_PLANNING_LATTICE_PIECEWISE_ACCELERATION_TRAJECTORY1D_H_
 #define MODULES_PLANNING_LATTICE_PIECEWISE_ACCELERATION_TRAJECTORY1D_H_
 
-#include <string>
 #include <array>
+#include <string>
 #include <vector>
 
 #include "modules/planning/math/curve1d/curve1d.h"
@@ -36,7 +36,7 @@ class ConstantAccelerationTrajectory1d : public Curve1d {
 
   virtual ~ConstantAccelerationTrajectory1d() = default;
 
-  void AppendSgment(const double a, const double t_duration);
+  void AppendSegment(const double a, const double t_duration);
 
   void PopSegment();
 

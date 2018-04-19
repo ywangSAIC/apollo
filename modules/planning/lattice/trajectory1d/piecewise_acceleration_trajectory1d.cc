@@ -23,8 +23,9 @@
 #include <algorithm>
 
 #include "modules/common/log.h"
-#include "modules/common/util/string_util.h"
 #include "modules/common/math/linear_interpolation.h"
+#include "modules/common/util/string_util.h"
+#include "modules/planning/common/planning_gflags.h"
 
 namespace apollo {
 namespace planning {
@@ -34,22 +35,24 @@ ConstantAccelerationTrajectory1d::ConstantAccelerationTrajectory1d(
   s_.push_back(start_s);
   v_.push_back(start_v);
   a_.push_back(0.0);
+  t_.push_back(0.0);
 }
 
-void ConstantAccelerationTrajectory1d::AppendSgment(const double a,
-                                                    const double t_duration) {
+void ConstantAccelerationTrajectory1d::AppendSegment(
+    const double a, const double t_duration) {
   double s0 = s_.back();
   double v0 = v_.back();
   double t0 = t_.back();
 
   double v1 = v0 + a * t_duration;
-  CHECK(v1 >= 0.0);
+  CHECK(v1 >= -FLAGS_lattice_epsilon);
 
   double delta_s = (v0 + v1) * t_duration * 0.5;
   double s1 = s0 + delta_s;
   double t1 = t0 + t_duration;
 
-  CHECK(s1 >= s0);
+  CHECK(s1 >= s0 - FLAGS_lattice_epsilon);
+  s1 = std::max(s1, s0);
   s_.push_back(s1);
   v_.push_back(v1);
   a_.push_back(a);
@@ -71,11 +74,11 @@ double ConstantAccelerationTrajectory1d::ParamLength() const {
 }
 
 std::string ConstantAccelerationTrajectory1d::ToString() const {
-  return apollo::common::util::StrCat(
-      apollo::common::util::PrintIter(s_, "\t"),
-      apollo::common::util::PrintIter(t_, "\t"),
-      apollo::common::util::PrintIter(v_, "\t"),
-      apollo::common::util::PrintIter(a_, "\t"), "\n");
+  return apollo::common::util::StrCat(apollo::common::util::PrintIter(s_, "\t"),
+                                      apollo::common::util::PrintIter(t_, "\t"),
+                                      apollo::common::util::PrintIter(v_, "\t"),
+                                      apollo::common::util::PrintIter(a_, "\t"),
+                                      "\n");
 }
 
 double ConstantAccelerationTrajectory1d::Evaluate(const std::uint32_t order,
@@ -157,7 +160,7 @@ std::array<double, 4> ConstantAccelerationTrajectory1d::Evaluate(
   double a = a_[index - 1];
   double j = 0.0;
 
-  return {s, v, a, j};
+  return {{s, v, a, j}};
 }
 
 }  // namespace planning

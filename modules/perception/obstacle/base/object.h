@@ -26,10 +26,11 @@
 #include "modules/common/proto/error_code.pb.h"
 #include "modules/perception/proto/perception_obstacle.pb.h"
 
-#include "modules/perception/lib/base/time_util.h"
-#include "modules/perception/lib/pcl_util/pcl_types.h"
+#include "modules/common/time/time_util.h"
+#include "modules/perception/common/pcl_types.h"
 #include "modules/perception/obstacle/base/object_supplement.h"
 #include "modules/perception/obstacle/base/types.h"
+#include "modules/perception/obstacle/camera/lane_post_process/common/type.h"
 
 namespace apollo {
 namespace perception {
@@ -39,7 +40,7 @@ struct alignas(16) Object {
   // deep copy
   void clone(const Object& rhs);
   std::string ToString() const;
-
+  void AddFourCorners(PerceptionObstacle* pb_obj) const;
   void Serialize(PerceptionObstacle* pb_obj) const;
   void Deserialize(const PerceptionObstacle& pb_obs);
 
@@ -67,10 +68,10 @@ struct alignas(16) Object {
   // foreground score/probability
   float score = 0.0;
   // foreground score/probability type
-  ScoreType score_type = SCORE_CNN;
+  ScoreType score_type = ScoreType::SCORE_CNN;
 
   // Object classification type.
-  ObjectType type = UNKNOWN;
+  ObjectType type = ObjectType::UNKNOWN;
   // Probability of each type, used for track type.
   std::vector<float> type_probs;
 
@@ -91,30 +92,39 @@ struct alignas(16) Object {
   Eigen::Matrix3d position_uncertainty;
   Eigen::Matrix3d velocity_uncertainty;
 
+  // modeling uncertainty from sensor level tracker
+  Eigen::Matrix4d state_uncertainty = Eigen::Matrix4d::Identity();
+
+  // CIPV
+  bool b_cipv = false;
   // sensor particular suplplements, default nullptr
   RadarSupplementPtr radar_supplement = nullptr;
+  CameraSupplementPtr camera_supplement = nullptr;
 };
-
-typedef std::shared_ptr<Object> ObjectPtr;
-typedef std::shared_ptr<const Object> ObjectConstPtr;
 
 // Sensor single frame objects.
 struct SensorObjects {
-  SensorObjects() {
-    sensor2world_pose = Eigen::Matrix4d::Zero();
-  }
+  SensorObjects() { sensor2world_pose = Eigen::Matrix4d::Zero(); }
 
   std::string ToString() const;
 
   // Transmit error_code to next subnode.
   common::ErrorCode error_code = common::ErrorCode::OK;
 
-  SensorType sensor_type = UNKNOWN_SENSOR_TYPE;
+  SensorType sensor_type = SensorType::UNKNOWN_SENSOR_TYPE;
   std::string sensor_id;
   double timestamp = 0.0;
   SeqId seq_num = 0;
-  std::vector<ObjectPtr> objects;
+  std::vector<std::shared_ptr<Object>> objects;
   Eigen::Matrix4d sensor2world_pose;
+  LaneObjectsPtr lane_objects;
+
+  uint32_t cipv_index = -1;
+  uint32_t cipv_track_id = -1;
+
+  // sensor particular suplplements, default nullptr
+  RadarFrameSupplementPtr radar_frame_supplement = nullptr;
+  CameraFrameSupplementPtr camera_frame_supplement = nullptr;
 };
 
 }  // namespace perception

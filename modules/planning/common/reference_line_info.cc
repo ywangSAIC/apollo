@@ -20,33 +20,35 @@
 
 #include "modules/planning/common/reference_line_info.h"
 
+#include <algorithm>
 #include <functional>
-#include <memory>
-#include <unordered_set>
 #include <utility>
 
 #include "modules/planning/proto/sl_boundary.pb.h"
 
+#include "modules/common/adapters/adapter_manager.h"
 #include "modules/common/configs/vehicle_config_helper.h"
-#include "modules/common/util/dropbox.h"
 #include "modules/common/util/string_util.h"
 #include "modules/common/util/util.h"
 #include "modules/map/hdmap/hdmap_common.h"
 #include "modules/map/hdmap/hdmap_util.h"
 #include "modules/planning/common/planning_gflags.h"
+#include "modules/planning/common/planning_thread_pool.h"
+#include "modules/planning/common/planning_util.h"
 
 namespace apollo {
 namespace planning {
 
+using apollo::canbus::Chassis;
 using apollo::common::EngageAdvice;
 using apollo::common::SLPoint;
 using apollo::common::TrajectoryPoint;
 using apollo::common::VehicleConfigHelper;
 using apollo::common::VehicleSignal;
+using apollo::common::adapter::AdapterManager;
 using apollo::common::math::Box2d;
 using apollo::common::math::Vec2d;
-using apollo::canbus::Chassis;
-using apollo::common::util::Dropbox;
+using apollo::planning::util::GetPlanningStatus;
 
 ReferenceLineInfo::ReferenceLineInfo(const common::VehicleState& vehicle_state,
                                      const TrajectoryPoint& adc_planning_point,
@@ -56,12 +58,6 @@ ReferenceLineInfo::ReferenceLineInfo(const common::VehicleState& vehicle_state,
       adc_planning_point_(adc_planning_point),
       reference_line_(reference_line),
       lanes_(segments) {}
-
-namespace {
-std::string junction_dropbox_id(const std::string& junction_id) {
-  return "junction_protection_" + junction_id;
-}
-}
 
 bool ReferenceLineInfo::Init(const std::vector<const Obstacle*>& obstacles) {
   const auto& param = VehicleConfigHelper::GetConfig().vehicle_param();
@@ -93,13 +89,24 @@ bool ReferenceLineInfo::Init(const std::vector<const Obstacle*>& obstacles) {
     AERROR << "Failed to add obstacles to reference line";
     return false;
   }
+
+  if (hdmap::GetSpeedControls()) {
+    auto* speed_controls = hdmap::GetSpeedControls();
+    for (const auto& speed_control : speed_controls->speed_control()) {
+      reference_line_.AddSpeedLimit(speed_control);
+    }
+  }
+
+  // set lattice planning target speed limit;
+  double cruise_speed =
+      std::min(FLAGS_speed_upper_bound,
+               reference_line().GetSpeedLimitFromS(adc_sl_boundary_.end_s()));
+  SetCruiseSpeed(std::min(FLAGS_default_cruise_speed, cruise_speed));
   is_inited_ = true;
   return true;
 }
 
-bool ReferenceLineInfo::IsInited() const {
-  return is_inited_;
-}
+bool ReferenceLineInfo::IsInited() const { return is_inited_; }
 
 bool WithinOverlap(const hdmap::PathOverlap& overlap, double s) {
   constexpr double kEpsilon = 1e-2;
@@ -108,23 +115,24 @@ bool WithinOverlap(const hdmap::PathOverlap& overlap, double s) {
 
 void ReferenceLineInfo::SetJunctionRightOfWay(double junction_s,
                                               bool is_protected) {
-  auto* junction_store = common::util::Dropbox<bool>::Open();
+  auto* right_of_way = GetPlanningStatus()->mutable_right_of_way();
+  auto* junction_right_of_way = right_of_way->mutable_junction();
   for (const auto& overlap : reference_line_.map_path().junction_overlaps()) {
     if (WithinOverlap(overlap, junction_s)) {
-      junction_store->Set(junction_dropbox_id(overlap.object_id), is_protected);
+      (*junction_right_of_way)[overlap.object_id] = is_protected;
     }
   }
 }
 
 ADCTrajectory::RightOfWayStatus ReferenceLineInfo::GetRightOfWayStatus() const {
-  auto* junction_store = common::util::Dropbox<bool>::Open();
+  auto* right_of_way = GetPlanningStatus()->mutable_right_of_way();
+  auto* junction_right_of_way = right_of_way->mutable_junction();
   for (const auto& overlap : reference_line_.map_path().junction_overlaps()) {
     if (overlap.end_s < adc_sl_boundary_.start_s()) {
-      junction_store->Remove(junction_dropbox_id(overlap.object_id));
+      junction_right_of_way->erase(overlap.object_id);
     } else if (WithinOverlap(overlap, adc_sl_boundary_.end_s())) {
-      auto* is_protected =
-          junction_store->Get(junction_dropbox_id(overlap.object_id));
-      if (is_protected != nullptr && *is_protected) {
+      auto is_protected = (*junction_right_of_way)[overlap.object_id];
+      if (is_protected) {
         return ADCTrajectory::PROTECTED;
       } else {
         double junction_s = (overlap.end_s + overlap.start_s) / 2.0;
@@ -143,9 +151,7 @@ ADCTrajectory::RightOfWayStatus ReferenceLineInfo::GetRightOfWayStatus() const {
   return ADCTrajectory::UNPROTECTED;
 }
 
-const hdmap::RouteSegments& ReferenceLineInfo::Lanes() const {
-  return lanes_;
-}
+const hdmap::RouteSegments& ReferenceLineInfo::Lanes() const { return lanes_; }
 
 const std::list<hdmap::Id> ReferenceLineInfo::TargetLaneId() const {
   std::list<hdmap::Id> lane_ids;
@@ -159,9 +165,7 @@ const SLBoundary& ReferenceLineInfo::AdcSlBoundary() const {
   return adc_sl_boundary_;
 }
 
-PathDecision* ReferenceLineInfo::path_decision() {
-  return &path_decision_;
-}
+PathDecision* ReferenceLineInfo::path_decision() { return &path_decision_; }
 
 const PathDecision& ReferenceLineInfo::path_decision() const {
   return path_decision_;
@@ -178,6 +182,12 @@ void ReferenceLineInfo::SetTrajectory(const DiscretizedTrajectory& trajectory) {
   discretized_trajectory_ = trajectory;
 }
 
+void ReferenceLineInfo::AddObstacleHelper(const Obstacle* obstacle, int* ret) {
+  auto* path_obstacle = AddObstacle(obstacle);
+  *ret = path_obstacle == nullptr ? 0 : 1;
+}
+
+// AddObstacle is thread safe
 PathObstacle* ReferenceLineInfo::AddObstacle(const Obstacle* obstacle) {
   if (!obstacle) {
     AERROR << "The provided obstacle is empty";
@@ -209,6 +219,7 @@ PathObstacle* ReferenceLineInfo::AddObstacle(const Obstacle* obstacle) {
     ADEBUG << "build reference line st boundary. id:" << obstacle->Id();
     path_obstacle->BuildReferenceLineStBoundary(reference_line_,
                                                 adc_sl_boundary_.start_s());
+
     ADEBUG << "reference line st boundary: "
            << path_obstacle->reference_line_st_boundary().min_t() << ", "
            << path_obstacle->reference_line_st_boundary().max_t()
@@ -221,10 +232,23 @@ PathObstacle* ReferenceLineInfo::AddObstacle(const Obstacle* obstacle) {
 
 bool ReferenceLineInfo::AddObstacles(
     const std::vector<const Obstacle*>& obstacles) {
-  for (const auto* obstacle : obstacles) {
-    if (!AddObstacle(obstacle)) {
-      AERROR << "Failed to add obstacle " << obstacle->Id();
+  if (FLAGS_use_multi_thread_to_add_obstacles) {
+    std::vector<int> ret(obstacles.size(), 0);
+    for (size_t i = 0; i < obstacles.size(); ++i) {
+      const auto* obstacle = obstacles.at(i);
+      PlanningThreadPool::instance()->Push(std::bind(
+          &ReferenceLineInfo::AddObstacleHelper, this, obstacle, &(ret[i])));
+    }
+    PlanningThreadPool::instance()->Synchronize();
+    if (std::find(ret.begin(), ret.end(), 0) != ret.end()) {
       return false;
+    }
+  } else {
+    for (const auto* obstacle : obstacles) {
+      if (!AddObstacle(obstacle)) {
+        AERROR << "Failed to add obstacle " << obstacle->Id();
+        return false;
+      }
     }
   }
   return true;
@@ -257,6 +281,14 @@ double ReferenceLineInfo::TrajectoryLength() const {
   return tps.back().path_point().s();
 }
 
+void ReferenceLineInfo::SetStopPoint(const StopPoint& stop_point) {
+  planning_target_.mutable_stop_point()->CopyFrom(stop_point);
+}
+
+void ReferenceLineInfo::SetCruiseSpeed(double speed) {
+  planning_target_.set_cruise_speed(speed);
+}
+
 bool ReferenceLineInfo::IsStartFrom(
     const ReferenceLineInfo& previous_reference_line_info) const {
   if (reference_line_.reference_points().empty()) {
@@ -270,21 +302,13 @@ bool ReferenceLineInfo::IsStartFrom(
   return previous_reference_line_info.reference_line_.IsOnRoad(sl_point);
 }
 
-const PathData& ReferenceLineInfo::path_data() const {
-  return path_data_;
-}
+const PathData& ReferenceLineInfo::path_data() const { return path_data_; }
 
-const SpeedData& ReferenceLineInfo::speed_data() const {
-  return speed_data_;
-}
+const SpeedData& ReferenceLineInfo::speed_data() const { return speed_data_; }
 
-PathData* ReferenceLineInfo::mutable_path_data() {
-  return &path_data_;
-}
+PathData* ReferenceLineInfo::mutable_path_data() { return &path_data_; }
 
-SpeedData* ReferenceLineInfo::mutable_speed_data() {
-  return &speed_data_;
-}
+SpeedData* ReferenceLineInfo::mutable_speed_data() { return &speed_data_; }
 
 bool ReferenceLineInfo::CombinePathAndSpeedProfile(
     const double relative_time, const double start_s,
@@ -329,13 +353,9 @@ bool ReferenceLineInfo::CombinePathAndSpeedProfile(
   return true;
 }
 
-void ReferenceLineInfo::SetDrivable(bool drivable) {
-  is_drivable_ = drivable;
-}
+void ReferenceLineInfo::SetDrivable(bool drivable) { is_drivable_ = drivable; }
 
-bool ReferenceLineInfo::IsDrivable() const {
-  return is_drivable_;
-}
+bool ReferenceLineInfo::IsDrivable() const { return is_drivable_; }
 
 bool ReferenceLineInfo::IsChangeLanePath() const {
   return !Lanes().IsOnSegment();
@@ -566,28 +586,25 @@ void ReferenceLineInfo::SetObjectDecisions(
 }
 
 void ReferenceLineInfo::ExportEngageAdvice(EngageAdvice* engage_advice) const {
-  constexpr char kPrevAdvice[] = "PlanningPreviousAdvice";
   constexpr double kMaxAngleDiff = M_PI / 6.0;
-  auto* prev_advice = Dropbox<EngageAdvice>::Open()->Get(kPrevAdvice);
-  if (!prev_advice) {
-    EngageAdvice advice;
-    Dropbox<EngageAdvice>::Open()->Set(kPrevAdvice, advice);
-    prev_advice = Dropbox<EngageAdvice>::Open()->Get(kPrevAdvice);
+  auto* prev_advice = GetPlanningStatus()->mutable_engage_advice();
+  if (!prev_advice->has_advice()) {
+    prev_advice->set_advice(EngageAdvice::DISALLOW_ENGAGE);
   }
   if (!IsDrivable()) {
     if (prev_advice->advice() == EngageAdvice::DISALLOW_ENGAGE) {
-      engage_advice->set_advice(EngageAdvice::DISALLOW_ENGAGE);
+      prev_advice->set_advice(EngageAdvice::DISALLOW_ENGAGE);
     } else {
-      engage_advice->set_advice(EngageAdvice::PREPARE_DISENGAGE);
+      prev_advice->set_advice(EngageAdvice::PREPARE_DISENGAGE);
     }
-    engage_advice->set_reason("Reference line not drivable");
+    prev_advice->set_reason("Reference line not drivable");
   } else if (!is_on_reference_line_) {
     if (prev_advice->advice() == EngageAdvice::DISALLOW_ENGAGE) {
-      engage_advice->set_advice(EngageAdvice::DISALLOW_ENGAGE);
+      prev_advice->set_advice(EngageAdvice::DISALLOW_ENGAGE);
     } else {
-      engage_advice->set_advice(EngageAdvice::PREPARE_DISENGAGE);
+      prev_advice->set_advice(EngageAdvice::PREPARE_DISENGAGE);
     }
-    engage_advice->set_reason("Not on reference line");
+    prev_advice->set_reason("Not on reference line");
   } else {
     // check heading
     auto ref_point =
@@ -595,21 +612,22 @@ void ReferenceLineInfo::ExportEngageAdvice(EngageAdvice* engage_advice) const {
     if (common::math::AngleDiff(vehicle_state_.heading(), ref_point.heading()) >
         kMaxAngleDiff) {
       if (prev_advice->advice() == EngageAdvice::DISALLOW_ENGAGE) {
-        engage_advice->set_advice(EngageAdvice::DISALLOW_ENGAGE);
+        prev_advice->set_advice(EngageAdvice::DISALLOW_ENGAGE);
       } else {
-        engage_advice->set_advice(EngageAdvice::PREPARE_DISENGAGE);
+        prev_advice->set_advice(EngageAdvice::PREPARE_DISENGAGE);
       }
-      engage_advice->set_reason("Vehicle heading is not aligned");
+      prev_advice->set_reason("Vehicle heading is not aligned");
     } else {
       if (vehicle_state_.driving_mode() !=
           Chassis::DrivingMode::Chassis_DrivingMode_COMPLETE_AUTO_DRIVE) {
-        engage_advice->set_advice(EngageAdvice::READY_TO_ENGAGE);
+        prev_advice->set_advice(EngageAdvice::READY_TO_ENGAGE);
       } else {
-        engage_advice->set_advice(EngageAdvice::KEEP_ENGAGED);
+        prev_advice->set_advice(EngageAdvice::KEEP_ENGAGED);
       }
+      prev_advice->clear_reason();
     }
   }
-  *prev_advice = *engage_advice;
+  engage_advice->CopyFrom(*prev_advice);
 }
 
 void ReferenceLineInfo::MakeEStopDecision(

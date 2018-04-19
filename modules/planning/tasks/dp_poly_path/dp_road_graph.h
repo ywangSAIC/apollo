@@ -23,8 +23,6 @@
 
 #include <limits>
 #include <list>
-#include <string>
-#include <utility>
 #include <vector>
 
 #include "modules/common/proto/pnc_point.pb.h"
@@ -89,7 +87,7 @@ class DPRoadGraph {
 
     common::SLPoint sl_point;
     const DPRoadGraphNode *min_cost_prev_node = nullptr;
-    ComparableCost min_cost = {true, true,
+    ComparableCost min_cost = {true, true, true,
                                std::numeric_limits<double>::infinity(),
                                std::numeric_limits<double>::infinity()};
     QuinticPolynomialCurve1d min_cost_curve;
@@ -117,6 +115,7 @@ class DPRoadGraph {
                   const uint32_t level, const uint32_t total_level,
                   TrajectoryCost *trajectory_cost, DPRoadGraphNode *front,
                   DPRoadGraphNode *cur_node);
+  bool HasSidepass();
 
  private:
   DpPolyPathConfig config_;
@@ -127,6 +126,8 @@ class DPRoadGraph {
   common::SLPoint init_sl_point_;
   common::FrenetFramePoint init_frenet_frame_point_;
   apollo::planning_internal::Debug *planning_debug_ = nullptr;
+
+  ObjectSidePass sidepass_;
 };
 
 }  // namespace planning

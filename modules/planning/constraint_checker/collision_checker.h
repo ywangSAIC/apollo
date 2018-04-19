@@ -21,25 +21,38 @@
 #ifndef MODULES_PLANNING_CONSTRAINT_CHECKER_COLLISION_CHECKER_H_
 #define MODULES_PLANNING_CONSTRAINT_CHECKER_COLLISION_CHECKER_H_
 
+#include <array>
 #include <vector>
 
-#include "modules/planning/common/trajectory/discretized_trajectory.h"
-#include "modules/planning/common/obstacle.h"
 #include "modules/common/math/box2d.h"
+#include "modules/planning/common/obstacle.h"
+#include "modules/planning/common/trajectory/discretized_trajectory.h"
 
 namespace apollo {
 namespace planning {
 
 class CollisionChecker {
  public:
-  explicit CollisionChecker(const std::vector<const Obstacle*>& obstacles);
+  explicit CollisionChecker(
+      const std::vector<const Obstacle*>& obstacles, const double ego_vehicle_s,
+      const double ego_vehicle_d,
+      const std::vector<common::PathPoint>& discretized_reference_line);
 
   bool InCollision(const DiscretizedTrajectory& discretized_trajectory);
 
  private:
-  void BuildPredictedEnv(const std::vector<const Obstacle*>& obstacles);
+  void BuildPredictedEnvironment(
+      const std::vector<const Obstacle*>& obstacles, const double ego_vehicle_s,
+      const double ego_vehicle_d,
+      const std::vector<common::PathPoint>& discretized_reference_line);
 
-  std::vector<std::vector<common::math::Box2d>> predicted_envs_;
+  bool IsEgoVehicleInLane(const double ego_vehicle_d);
+
+  bool ShouldIgnore(
+      const Obstacle* obstacle, const double ego_vehicle_s,
+      const std::vector<apollo::common::PathPoint>& discretized_reference_line);
+
+  std::vector<std::vector<common::math::Box2d>> predicted_bounding_rectangles_;
 };
 
 }  // namespace planning

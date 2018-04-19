@@ -22,8 +22,10 @@
 #include "modules/common/math/vec2d.h"
 #include "modules/common/time/time.h"
 #include "modules/common/util/file.h"
+#include "modules/prediction/common/feature_output.h"
 #include "modules/prediction/common/prediction_gflags.h"
 #include "modules/prediction/common/prediction_map.h"
+#include "modules/prediction/common/validation_checker.h"
 #include "modules/prediction/container/container_manager.h"
 #include "modules/prediction/container/obstacles/obstacles_container.h"
 #include "modules/prediction/container/pose/pose_container.h"
@@ -77,18 +79,25 @@ Status Prediction::Init() {
   EvaluatorManager::instance()->Init(prediction_conf_);
   PredictorManager::instance()->Init(prediction_conf_);
 
-  CHECK(AdapterManager::GetLocalization()) << "Localization is not ready.";
-  CHECK(AdapterManager::GetPerceptionObstacles()) << "Perception is not ready.";
+  CHECK(AdapterManager::GetLocalization()) << "Localization is not registered.";
+  CHECK(AdapterManager::GetPerceptionObstacles())
+      << "Perception is not registered.";
 
-  // Set perception obstacle callback function
-  AdapterManager::AddPerceptionObstaclesCallback(&Prediction::RunOnce, this);
   // Set localization callback function
   AdapterManager::AddLocalizationCallback(&Prediction::OnLocalization, this);
   // Set planning callback function
   AdapterManager::AddPlanningCallback(&Prediction::OnPlanning, this);
+  // Set perception obstacle callback function
+  AdapterManager::AddPerceptionObstaclesCallback(&Prediction::RunOnce, this);
 
-  if (!PredictionMap::Ready()) {
+  if (!FLAGS_use_navigation_mode && !PredictionMap::Ready()) {
     return OnError("Map cannot be loaded.");
+  }
+
+  if (FLAGS_prediction_offline_mode) {
+    if (!FeatureOutput::Ready()) {
+      return OnError("Feature output is not ready.");
+    }
   }
 
   return Status::OK();
@@ -96,14 +105,13 @@ Status Prediction::Init() {
 
 Status Prediction::Start() { return Status::OK(); }
 
-void Prediction::Stop() {}
+void Prediction::Stop() {
+  if (FLAGS_prediction_offline_mode) {
+    FeatureOutput::Close();
+  }
+}
 
 void Prediction::OnLocalization(const LocalizationEstimate& localization) {
-  ObstaclesContainer* obstacles_container = dynamic_cast<ObstaclesContainer*>(
-      ContainerManager::instance()->GetContainer(
-          AdapterConfig::PERCEPTION_OBSTACLES));
-  CHECK_NOTNULL(obstacles_container);
-
   PoseContainer* pose_container = dynamic_cast<PoseContainer*>(
       ContainerManager::instance()->GetContainer(AdapterConfig::LOCALIZATION));
   CHECK_NOTNULL(pose_container);
@@ -132,8 +140,12 @@ void Prediction::RunOnce(const PerceptionObstacles& perception_obstacles) {
     ros::shutdown();
   }
 
-  ADEBUG << "Received a perception message ["
-         << perception_obstacles.ShortDebugString() << "].";
+  // Update relative map if needed
+  AdapterManager::Observe();
+  if (FLAGS_use_navigation_mode && !PredictionMap::Ready()) {
+    AERROR << "Relative map is empty.";
+    return;
+  }
 
   double start_timestamp = Clock::NowInSeconds();
 
@@ -143,6 +155,9 @@ void Prediction::RunOnce(const PerceptionObstacles& perception_obstacles) {
           AdapterConfig::PERCEPTION_OBSTACLES));
   CHECK_NOTNULL(obstacles_container);
   obstacles_container->Insert(perception_obstacles);
+
+  ADEBUG << "Received a perception message ["
+         << perception_obstacles.ShortDebugString() << "].";
 
   // Update ADC status
   PoseContainer* pose_container = dynamic_cast<PoseContainer*>(
@@ -164,8 +179,15 @@ void Prediction::RunOnce(const PerceptionObstacles& perception_obstacles) {
     adc_container->SetPosition(adc_position);
   }
 
-  // Make predictions
+  // Make evaluations
   EvaluatorManager::instance()->Run(perception_obstacles);
+
+  // No prediction for offline mode
+  if (FLAGS_prediction_offline_mode) {
+    return;
+  }
+
+  // Make predictions
   PredictorManager::instance()->Run(perception_obstacles);
 
   auto prediction_obstacles =
@@ -178,7 +200,7 @@ void Prediction::RunOnce(const PerceptionObstacles& perception_obstacles) {
          prediction_obstacles.prediction_obstacle()) {
       for (auto const& trajectory : prediction_obstacle.trajectory()) {
         for (auto const& trajectory_point : trajectory.trajectory_point()) {
-          if (!IsValidTrajectoryPoint(trajectory_point)) {
+          if (!ValidationChecker::ValidTrajectoryPoint(trajectory_point)) {
             AERROR << "Invalid trajectory point ["
                    << trajectory_point.ShortDebugString() << "]";
             return;
@@ -193,17 +215,6 @@ void Prediction::RunOnce(const PerceptionObstacles& perception_obstacles) {
 
 Status Prediction::OnError(const std::string& error_msg) {
   return Status(ErrorCode::PREDICTION_ERROR, error_msg);
-}
-
-bool Prediction::IsValidTrajectoryPoint(
-    const TrajectoryPoint& trajectory_point) {
-  return trajectory_point.has_path_point() &&
-         (!std::isnan(trajectory_point.path_point().x())) &&
-         (!std::isnan(trajectory_point.path_point().y())) &&
-         (!std::isnan(trajectory_point.path_point().theta())) &&
-         (!std::isnan(trajectory_point.v())) &&
-         (!std::isnan(trajectory_point.a())) &&
-         (!std::isnan(trajectory_point.relative_time()));
 }
 
 }  // namespace prediction
