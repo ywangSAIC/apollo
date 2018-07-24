@@ -18,10 +18,10 @@
  * @file
  **/
 
-#ifndef MODULES_PLANNING_TASKS_TRAFFIC_DECIDER_CIPV_H_
-#define MODULES_PLANNING_TASKS_TRAFFIC_DECIDER_CIPV_H_
+#ifndef MODULES_PLANNING_TASKS_TRAFFIC_DECIDER_FRONT_VEHICLE_H_
+#define MODULES_PLANNING_TASKS_TRAFFIC_DECIDER_FRONT_VEHICLE_H_
 
-#include "modules/perception/proto/perception_obstacle.pb.h"
+#include <string>
 
 #include "modules/planning/common/frame.h"
 #include "modules/planning/common/reference_line_info.h"
@@ -30,20 +30,26 @@
 namespace apollo {
 namespace planning {
 
-class CIPV : public TrafficRule {
+class FrontVehicle : public TrafficRule {
  public:
-  explicit CIPV(const TrafficRuleConfig& config);
-  ~CIPV() = default;
+  explicit FrontVehicle(const TrafficRuleConfig& config);
+  ~FrontVehicle() = default;
 
-  bool ApplyRule(Frame* frame, ReferenceLineInfo* reference_line_info);
+  common::Status ApplyRule(Frame* const frame,
+                 ReferenceLineInfo* const reference_line_info);
 
  private:
-  bool CreateFollowDecision(const PathObstacle& path_obstacle,
-                            const ReferenceLineInfo* reference_line_info,
-                            ObjectDecisionType* const follow_decision);
-};
+  void MakeDecisions(Frame* const frame,
+                     ReferenceLineInfo* const reference_line_info);
 
+  bool MakeSidePassDecision(ReferenceLineInfo* const reference_line_info);
+  bool ProcessSidePass(ReferenceLineInfo* const reference_line_info);
+  std::string FindPassableObstacle(
+      ReferenceLineInfo* const reference_line_info);
+
+  void MakeStopDecision(ReferenceLineInfo* reference_line_info);
+};
 }  // namespace planning
 }  // namespace apollo
 
-#endif  // MODULES_PLANNING_TASKS_TRAFFIC_DECIDER_CIPV_H_
+#endif  // MODULES_PLANNING_TASKS_TRAFFIC_DECIDER_FRONT_VEHICLE_H_
