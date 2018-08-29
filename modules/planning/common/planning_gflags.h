@@ -26,14 +26,12 @@ DECLARE_string(planning_config_file);
 DECLARE_string(planning_adapter_config_filename);
 DECLARE_string(traffic_rule_config_filename);
 DECLARE_string(smoother_config_filename);
+DECLARE_string(reopt_smoother_config_filename);
 DECLARE_int32(planning_loop_rate);
+DECLARE_bool(enable_collision_detection);
 DECLARE_string(rtk_trajectory_filename);
 DECLARE_uint64(rtk_trajectory_forward);
 DECLARE_double(rtk_trajectory_resolution);
-DECLARE_double(look_backward_distance);
-DECLARE_double(look_forward_short_distance);
-DECLARE_double(look_forward_long_distance);
-DECLARE_double(look_forward_time_sec);
 DECLARE_bool(enable_reference_line_stitching);
 DECLARE_double(look_forward_extend_distance);
 DECLARE_double(reference_line_stitch_overlap_distance);
@@ -130,7 +128,6 @@ DECLARE_double(lag_prediction_protection_distance);
 DECLARE_double(perception_confidence_threshold);
 
 DECLARE_bool(enable_record_debug);
-DECLARE_bool(enable_prediction);
 
 DECLARE_double(turn_signal_distance);
 
@@ -141,7 +138,7 @@ DECLARE_bool(enable_follow_accel_constraint);
 DECLARE_bool(enable_sqp_solver);
 
 /// thread pool
-DECLARE_int32(num_thread_planning_thread_pool);
+DECLARE_uint32(max_planning_thread_pool_size);
 DECLARE_bool(use_multi_thread_to_add_obstacles);
 DECLARE_bool(enable_multi_thread_in_dp_poly_path);
 DECLARE_bool(enable_multi_thread_in_dp_st_graph);
@@ -162,6 +159,13 @@ DECLARE_double(min_velocity_sample_gap);
 DECLARE_double(lon_collision_buffer);
 DECLARE_double(lat_collision_buffer);
 DECLARE_uint32(num_sample_follow_per_timestamp);
+
+DECLARE_bool(lateral_optimization);
+DECLARE_double(weight_lateral_offset);
+DECLARE_double(weight_lateral_derivative);
+DECLARE_double(weight_lateral_second_order_derivative);
+DECLARE_double(weight_lateral_obstacle_distance);
+DECLARE_double(lateral_third_order_derivative_max);
 
 // Lattice Evaluate Parameters
 DECLARE_double(weight_lon_objective);
@@ -184,10 +188,21 @@ DECLARE_double(time_min_density);
 DECLARE_double(comfort_acceleration_factor);
 DECLARE_double(polynomial_minimal_param);
 DECLARE_double(lattice_stop_buffer);
+DECLARE_double(max_s_lateral_optimization);
+DECLARE_double(default_delta_s_lateral_optimization);
+DECLARE_double(bound_buffer);
+DECLARE_double(nudge_buffer);
 
 DECLARE_bool(use_planning_fallback);
+DECLARE_double(fallback_total_time);
+DECLARE_double(fallback_time_unit);
+DECLARE_double(polynomial_speed_fallback_velocity);
 
 // navigation mode
 DECLARE_double(navigation_fallback_cruise_time);
+
+// control whether to stitch last trajectory to current plan trajectory
+DECLARE_bool(enable_stitch_last_trajectory);
+DECLARE_bool(enable_planning_pad_msg);
 
 #endif  // MODULES_PLANNING_COMMON_PLANNING_GFLAGS_H_

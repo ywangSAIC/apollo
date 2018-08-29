@@ -29,6 +29,8 @@ DEFINE_string(localization_topic, "/apollo/localization/pose",
               "localization topic name");
 DEFINE_string(planning_trajectory_topic, "/apollo/planning",
               "planning trajectory topic name");
+DEFINE_string(planning_pad_topic, "/apollo/planning/pad",
+              "planning pad topic name");
 DEFINE_string(monitor_topic, "/apollo/monitor", "ROS topic for monitor");
 DEFINE_string(pad_topic, "/apollo/control/pad",
               "control pad message topic name");
@@ -39,6 +41,12 @@ DEFINE_string(pointcloud_topic,
               "pointcloud topic name");
 DEFINE_string(pointcloud_raw_topic, "/apollo/sensor/velodyne64/PointCloud2",
               "pointcloud raw topic name");
+DEFINE_string(velodyne_raw_topic,
+              "/apollo/sensor/velodyne64/VelodyneScanUnified",
+              "velodyne64 raw data topic name");
+DEFINE_string(pointcloud_fusion_topic,
+              "/apollo/sensor/velodyne64/fusion/PointCloud2",
+              "pointcloud fusion topic name");
 DEFINE_string(vlp16_pointcloud_topic,
               "/apollo/sensor/velodyne16/compensator/PointCloud2",
               "16 beam Lidar pointcloud topic name");
@@ -86,6 +94,12 @@ DEFINE_string(image_short_topic, "/apollo/sensor/camera/traffic/image_short",
               "short camera image topic name");
 DEFINE_string(image_long_topic, "/apollo/sensor/camera/traffic/image_long",
               "long camera image topic name");
+DEFINE_string(image_usb_cam_topic, "/apollo/sensor/camera/image_usb_cam",
+              "usb camera image topic name");
+DEFINE_string(camera_image_long_topic, "/apollo/sensor/camera/image_long",
+              "long camera image topic name");
+DEFINE_string(camera_image_short_topic, "/apollo/sensor/camera/image_short",
+              "short camera image topic name");
 DEFINE_string(gnss_rtk_obs_topic, "/apollo/sensor/gnss/rtk_obs",
               "Gnss rtk observation topic name");
 DEFINE_string(gnss_rtk_eph_topic, "/apollo/sensor/gnss/rtk_eph",
@@ -102,12 +116,8 @@ DEFINE_string(localization_msf_status, "/apollo/localization/msf_status",
               "msf localization status");
 DEFINE_string(relative_map_topic, "/apollo/relative_map", "relative map");
 DEFINE_string(navigation_topic, "/apollo/navigation", "navigation");
-DEFINE_string(voice_detection_request_topic,
-              "/apollo/hmi/voice_detection_request",
-              "Voice detetection request topic name.");
-DEFINE_string(voice_detection_response_topic,
-              "/apollo/hmi/voice_detection_response",
-              "Voice detetection response topic name.");
+DEFINE_string(audio_capture_topic, "/apollo/hmi/audio_capture",
+              "HMI audio capture topic name.");
 // For pandora.
 DEFINE_string(pandora_pointcloud_topic,
               "/apollo/sensor/pandora/hesai40/PointCloud2",

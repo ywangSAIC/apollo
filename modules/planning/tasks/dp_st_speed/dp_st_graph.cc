@@ -25,12 +25,12 @@
 #include <string>
 #include <utility>
 
-#include "modules/common/proto/pnc_point.pb.h"
-
 #include "modules/common/log.h"
 #include "modules/common/math/vec2d.h"
+#include "modules/common/proto/pnc_point.pb.h"
+#include "modules/common/util/thread_pool.h"
+
 #include "modules/planning/common/planning_gflags.h"
-#include "modules/planning/common/planning_thread_pool.h"
 
 namespace apollo {
 namespace planning {
@@ -40,8 +40,10 @@ using apollo::common::SpeedPoint;
 using apollo::common::Status;
 using apollo::common::VehicleParam;
 using apollo::common::math::Vec2d;
+using apollo::common::util::ThreadPool;
 
 namespace {
+
 constexpr float kInf = std::numeric_limits<float>::infinity();
 
 bool CheckOverlapOnDpStGraph(const std::vector<const StBoundary*>& boundaries,
@@ -172,16 +174,22 @@ Status DpStGraph::CalculateTotalCost() {
     int highest_row = 0;
     int lowest_row = cost_table_.back().size() - 1;
 
-    for (uint32_t r = next_lowest_row; r <= next_highest_row; ++r) {
-      if (FLAGS_enable_multi_thread_in_dp_st_graph) {
-        PlanningThreadPool::instance()->Push(
-            std::bind(&DpStGraph::CalculateCostAt, this, c, r));
-      } else {
-        CalculateCostAt(c, r);
+    int count = next_highest_row - next_lowest_row + 1;
+    if (count > 0) {
+      std::vector<std::future<void>> futures;
+
+      for (uint32_t r = next_lowest_row; r <= next_highest_row; ++r) {
+        if (FLAGS_enable_multi_thread_in_dp_st_graph) {
+          futures.push_back(ThreadPool::pool()->push(
+              std::bind(&DpStGraph::CalculateCostAt, this, c, r)));
+        } else {
+          CalculateCostAt(c, r);
+        }
       }
-    }
-    if (FLAGS_enable_multi_thread_in_dp_st_graph) {
-      PlanningThreadPool::instance()->Synchronize();
+
+      for (const auto& f : futures) {
+        f.wait();
+      }
     }
 
     for (uint32_t r = next_lowest_row; r <= next_highest_row; ++r) {

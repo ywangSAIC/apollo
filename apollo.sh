@@ -109,6 +109,12 @@ function generate_build_targets() {
   if [ ${MACHINE_ARCH} != "x86_64" ]; then
      BUILD_TARGETS=$(echo $BUILD_TARGETS |tr ' ' '\n' | grep -v "msf")
   fi
+  #switch for building fuzz test
+  if [ -z $BUILD_FUZZ_TEST ]; then
+     BUILD_TARGETS=$(echo $BUILD_TARGETS |tr ' ' '\n' | grep -v "fuzz")
+  else
+     BUILD_TARGETS=`bazel query //modules/tools/fuzz/...`
+  fi
 }
 
 #=================================================
@@ -121,11 +127,33 @@ function build() {
   info "Building on $MACHINE_ARCH..."
 
   MACHINE_ARCH=$(uname -m)
-  JOB_ARG=""
+  JOB_ARG="--jobs=$(nproc)"
   if [ "$MACHINE_ARCH" == 'aarch64' ]; then
     JOB_ARG="--jobs=3"
   fi
-  echo "$BUILD_TARGETS" | xargs bazel build $JOB_ARG $DEFINES -c $@
+  info "Building with $JOB_ARG for $MACHINE_ARCH"
+
+  # Switch for building fuzz test.
+  if [ -z $BUILD_FUZZ_TEST ]; then
+    echo "$BUILD_TARGETS" | xargs bazel build $JOB_ARG $DEFINES -c $@
+  else
+    if [ -z "$(command -v clang-6.0)" ]; then
+      # Install clang-6.0 if it doesn't exist.
+      info "Installing clang-6.0 which is required by the fuzz test ..."
+      sudo apt-add-repository \
+      "deb http://apt.llvm.org/trusty/ llvm-toolchain-trusty-6.0 main"
+      wget -O - http://apt.llvm.org/llvm-snapshot.gpg.key \
+      | sudo apt-key add -
+      sudo apt-get update
+      sudo apt-get install -y clang-6.0 lldb-6.0 lld-6.0
+      sudo ln -s /usr/lib/x86_64-linux-gnu/libgfortran.so.3 \
+      /usr/lib/libgfortran.so
+    fi
+    echo "$BUILD_TARGETS" | xargs bazel build \
+    --crosstool_top=tools/clang-6.0:toolchain \
+    $JOB_ARG $DEFINES -c $@ --compilation_mode=dbg
+  fi
+
   if [ $? -ne 0 ]; then
     fail 'Build failed!'
   fi
@@ -135,8 +163,9 @@ function build() {
 
   # Clear KV DB and update commit_id after compiling.
   rm -fr data/kv_db
+  REVISION=$(get_revision)
   python modules/tools/common/kv_db.py put \
-      "apollo:data:commit_id" "$(git rev-parse HEAD)"
+      "apollo:data:commit_id" "$REVISION"
 
   if [ -d /apollo-simulator ] && [ -e /apollo-simulator/build.sh ]; then
     cd /apollo-simulator && bash build.sh build
@@ -152,17 +181,37 @@ function build() {
 function cibuild() {
   echo "Start building, please wait ..."
   generate_build_targets
+
+  JOB_ARG="--jobs=$(nproc)"
+  if [ "$MACHINE_ARCH" == 'aarch64' ]; then
+    JOB_ARG="--jobs=3"
+  fi
+  info "Building with $JOB_ARG for $MACHINE_ARCH"
+
   echo "Building on $MACHINE_ARCH..."
   BUILD_TARGETS="
-  //modules/control
-  //modules/dreamview
-  //modules/localization
-  //modules/perception
-  //modules/planning
-  //modules/prediction
-  //modules/routing
+  //modules/common/...
+  //modules/canbus:canbus_lib
+  //modules/control/...
+  //modules/dreamview/...
+  //modules/drivers/gnss/...
+  //modules/drivers/lidar_velodyne/...
+  //modules/drivers/camera/...
+  //modules/localization/...
+  //modules/map/...
+  //modules/perception/...
+  //modules/planning/...
+  //modules/prediction/...
+  //modules/routing/...
   "
-  bazel build $DEFINES $@ $BUILD_TARGETS
+  bazel build $JOB_ARG $DEFINES $@ $BUILD_TARGETS
+
+  # current velodyne drivers
+  build_velodyne
+
+  # future velodyne drivers
+  build_velodyne_vls128
+
   if [ $? -eq 0 ]; then
     success 'Build passed!'
   else
@@ -274,7 +323,7 @@ function release() {
   cp -r third_party/can_card_library/*/lib/* $LIB_DIR
   cp -r bazel-genfiles/external $LIB_DIR
   cp -r py_proto/modules $LIB_DIR
-  cp modules/perception/cuda_util/cmake_build/libcuda_util.so $LIB_DIR
+  cp /apollo/bazel-apollo/bazel-out/local-opt/bin/modules/perception/cuda_util/libintegrated_cuda_util.so $LIB_DIR
 
   # doc
   cp LICENSE "${APOLLO_RELEASE_DIR}"
@@ -282,7 +331,8 @@ function release() {
 
   # release info
   META="${APOLLO_RELEASE_DIR}/meta.ini"
-  echo "git_commit: $(git rev-parse HEAD)" >> $META
+  echo "git_commit: $(get_revision)" >> $META
+  echo "git_branch: $(get_branch)" >> $META
   echo "car_type: LINCOLN.MKZ" >> $META
   echo "arch: ${MACHINE_ARCH}" >> $META
 }
@@ -332,7 +382,7 @@ function run_test() {
     echo -e "${RED}Need GPU to run the tests.${NO_COLOR}"
     echo "$BUILD_TARGETS" | xargs bazel test $DEFINES --config=unit_test -c dbg --test_verbose_timeout_warnings $@
   else
-    echo "$BUILD_TARGETS" | grep -v "cnn_segmentation_test" | grep -v "yolo_camera_detector_test" | xargs bazel test $DEFINES --config=unit_test -c dbg --test_verbose_timeout_warnings $@
+    echo "$BUILD_TARGETS" | grep -v "cnn_segmentation_test\|yolo_camera_detector_test\|unity_recognize_test\|perception_traffic_light_rectify_test\|cuda_util_test" | xargs bazel test $DEFINES --config=unit_test -c dbg --test_verbose_timeout_warnings $@
   fi
   if [ $? -ne 0 ]; then
     fail 'Test failed!'
@@ -345,15 +395,80 @@ function run_test() {
   fi
 }
 
+function citest_perception() {
+  generate_build_targets
+
+  # common related test
+  echo "$BUILD_TARGETS" | grep "perception\/" | grep -v "sunnyvale_big_loop\|cnn_segmentation_test\|yolo_camera_detector_test\|unity_recognize_test\|perception_traffic_light_rectify_test\|cuda_util_test" | xargs bazel test $DEFINES --config=unit_test -c dbg --test_verbose_timeout_warnings $@
+
+  if [ $? -eq 0 ]; then
+    success 'Test passed!'
+    return 0
+  else
+    fail 'Test failed!'
+    return 1
+  fi
+}
+
+function citest_dreamview() {
+  generate_build_targets
+
+  # common related test
+  echo "$BUILD_TARGETS" | grep "dreamview\/" | xargs bazel test $DEFINES --config=unit_test -c dbg --test_verbose_timeout_warnings $@
+
+  if [ $? -eq 0 ]; then
+    success 'Test passed!'
+    return 0
+  else
+    fail 'Test failed!'
+    return 1
+  fi
+}
+
+function citest_map() {
+  generate_build_targets
+
+  # common related test
+  echo "$BUILD_TARGETS" | grep "map\/" | grep -v "cuda_util_test" | xargs bazel test $DEFINES --config=unit_test -c dbg --test_verbose_timeout_warnings $@
+
+  if [ $? -eq 0 ]; then
+    success 'Test passed!'
+    return 0
+  else
+    fail 'Test failed!'
+    return 1
+  fi
+}
+
+function citest_basic() {
+  generate_build_targets
+
+  # common related test
+  echo "$BUILD_TARGETS" | grep "common\/" | xargs bazel test $DEFINES --config=unit_test -c dbg --test_verbose_timeout_warnings $@
+
+  # control related test
+  echo "$BUILD_TARGETS" | grep "control\/" | xargs bazel test $DEFINES --config=unit_test -c dbg --test_verbose_timeout_warnings $@
+
+  # prediction related test
+  echo "$BUILD_TARGETS" | grep "prediction\/" | xargs bazel test $DEFINES --config=unit_test -c dbg --test_verbose_timeout_warnings $@
+
+  # planning related test
+  echo "$BUILD_TARGETS" | grep "planning\/" | xargs bazel test $DEFINES --config=unit_test -c dbg --test_verbose_timeout_warnings $@
+
+  if [ $? -eq 0 ]; then
+    success 'Test passed!'
+    return 0
+  else
+    fail 'Test failed!'
+    return 1
+  fi
+}
+
 function citest() {
-  BUILD_TARGETS="
-  //modules/planning/integration_tests:garage_test
-  //modules/planning/integration_tests:sunnyvale_loop_test
-  //modules/control/integration_tests:simple_control_test
-  //modules/prediction/container/obstacles:obstacle_test
-  //modules/dreamview/backend/simulation_world:simulation_world_service_test
-  "
-  bazel test $DEFINES --config=unit_test --test_verbose_timeout_warnings $@ $BUILD_TARGETS
+  citest_basic
+  citest_perception
+  citest_map
+  citest_dreamview
   if [ $? -eq 0 ]; then
     success 'Test passed!'
     return 0
@@ -419,10 +534,37 @@ function gen_doc() {
 }
 
 function version() {
+  rev=$(get_revision)
+  if [ "$rev" = "unknown" ];then
+    echo "Version: $rev"
+    return
+  fi
   commit=$(git log -1 --pretty=%H)
   date=$(git log -1 --pretty=%cd)
   echo "Commit: ${commit}"
   echo "Date: ${date}"
+}
+
+function get_revision() {
+  git rev-parse --is-inside-work-tree &> /dev/null
+  if [ $? = 0 ];then
+    REVISION=$(git rev-parse HEAD)
+  else
+    warning "Could not get the version number, maybe this is not a git work tree." >&2
+    REVISION="unknown"
+  fi
+  echo "$REVISION"
+}
+
+function get_branch() {
+  git branch &> /dev/null
+  if [ $? = 0 ];then
+    BRANCH=$(git rev-parse --abbrev-ref HEAD)
+  else
+    warning "Could not get the branch name, maybe this is not a git work tree." >&2
+    BRANCH="unknown"
+  fi
+  echo "$BRANCH"
 }
 
 function build_velodyne() {
@@ -447,6 +589,30 @@ function build_velodyne() {
   rm -rf modules/build_isolated/
   rm -rf modules/devel_isolated/
 }
+
+function build_velodyne_vls128() {
+  CURRENT_PATH=$(pwd)
+  if [ -d "${ROS_ROOT}" ]; then
+    ROS_PATH="${ROS_ROOT}/../.."
+  else
+    warning "ROS not found. Run apolllo.sh build first."
+    exit 1
+  fi
+
+  source "${ROS_PATH}/setup.bash"
+
+  cd modules
+  catkin_make_isolated --install --source drivers/velodyne_vls \
+    --install-space "${ROS_PATH}" -DCMAKE_BUILD_TYPE=Release \
+    --cmake-args --no-warn-unused-cli
+  find "${ROS_PATH}" -name "*.pyc" -print0 | xargs -0 rm -rf
+  cd -
+
+  rm -rf modules/.catkin_workspace
+  rm -rf modules/build_isolated/
+  rm -rf modules/devel_isolated/
+}
+
 
 
 function build_lslidar() {
@@ -537,6 +703,7 @@ function print_usage() {
   ${BLUE}build_opt${NONE}: build optimized binary for the code
   ${BLUE}build_gpu${NONE}: run build only with Caffe GPU mode support
   ${BLUE}build_velodyne${NONE}: build velodyne driver
+  ${BLUE}build_velodyne_vls128${NONE}: build velodyne vls-128 driver
   ${BLUE}build_lslidar${NONE}: build lslidar driver
   ${BLUE}build_rslidar${NONE}: build rslidar driver
   ${BLUE}build_usbcam${NONE}: build usb camera driver
@@ -544,6 +711,7 @@ function print_usage() {
   ${BLUE}build_fe${NONE}: compile frontend javascript code, this requires all the node_modules to be installed already
   ${BLUE}build_no_perception [dbg|opt]${NONE}: run build build skip building perception module, useful when some perception dependencies are not satisified, e.g., CUDA, CUDNN, LIDAR, etc.
   ${BLUE}build_prof${NONE}: build for gprof support.
+  ${BLUE}build_fuzz_test${NONE}: build fuzz test cases.
   ${BLUE}buildify${NONE}: fix style of BUILD files
   ${BLUE}check${NONE}: run build/lint/test, please make sure it passes before checking in new code
   ${BLUE}clean${NONE}: run Bazel clean
@@ -607,11 +775,11 @@ function main() {
       apollo_build_opt $@
       ;;
     build_gpu)
-      DEFINES="${DEFINES} --cxxopt=-DUSE_CAFFE_GPU"
+      DEFINES="${DEFINES} --define USE_GPU=true --cxxopt=-DUSE_GPU"
       apollo_build_dbg $@
       ;;
     build_opt_gpu)
-      DEFINES="${DEFINES} --cxxopt=-DUSE_CAFFE_GPU"
+      DEFINES="${DEFINES} --define USE_GPU=true --cxxopt=-DUSE_GPU"
       apollo_build_opt $@
       ;;
     build_fe)
@@ -626,6 +794,9 @@ function main() {
     build_velodyne)
       build_velodyne
       ;;
+    build_velodyne_vls128)
+      build_velodyne_vls128
+      ;;
     build_lslidar)
       build_lslidar
       ;;
@@ -635,6 +806,10 @@ function main() {
     build_usbcam)
       build_usbcam
       ;;
+    build_fuzz_test)
+      BUILD_FUZZ_TEST=true
+      apollo_build_dbg $@
+    ;;
     config)
       config
       ;;
@@ -652,8 +827,24 @@ function main() {
       DEFINES="${DEFINES} --cxxopt=-DCPU_ONLY"
       citest $@
       ;;
+    citest_map)
+      DEFINES="${DEFINES} --cxxopt=-DCPU_ONLY"
+      citest_map $@
+      ;;
+    citest_dreamview)
+      DEFINES="${DEFINES} --cxxopt=-DCPU_ONLY"
+      citest_dreamview $@
+      ;;
+    citest_perception)
+      DEFINES="${DEFINES} --cxxopt=-DCPU_ONLY"
+      citest_perception $@
+      ;;
+    citest_basic)
+      DEFINES="${DEFINES} --cxxopt=-DCPU_ONLY"
+      citest_basic $@
+      ;;
     test_gpu)
-      DEFINES="${DEFINES} --cxxopt=-DUSE_CAFFE_GPU"
+      DEFINES="${DEFINES} --cxxopt=-DUSE_GPU"
       USE_GPU="1"
       run_test $@
       ;;

@@ -27,8 +27,8 @@
 
 #include "modules/common/log.h"
 #include "modules/common/util/file.h"
+#include "modules/common/util/thread_pool.h"
 #include "modules/planning/common/planning_gflags.h"
-#include "modules/planning/common/planning_thread_pool.h"
 
 namespace apollo {
 namespace planning {
@@ -36,10 +36,9 @@ namespace planning {
 class DpStGraphTest : public ::testing::Test {
  public:
   virtual void SetUp() {
-    PlanningThreadPool::instance()->Init();
-
     // dp_config_
     PlanningConfig config;
+    FLAGS_enable_multi_thread_in_dp_st_graph = true;
     FLAGS_planning_config_file = "modules/planning/conf/planning_config.pb.txt";
     CHECK(apollo::common::util::GetProtoFromFile(FLAGS_planning_config_file,
                                                  &config));
@@ -49,6 +48,8 @@ class DpStGraphTest : public ::testing::Test {
     for (float s = 0; s < 200.0; s += 1.0) {
       speed_limit_.AppendSpeedLimit(s, 25.0);
     }
+
+    apollo::common::util::ThreadPool::Init(10);
   }
 
   std::list<PathObstacle> path_obstacle_list_;

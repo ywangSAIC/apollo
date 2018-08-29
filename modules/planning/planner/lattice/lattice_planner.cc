@@ -172,7 +172,11 @@ Status LatticePlanner::PlanOnReferenceLine(
       *ptr_reference_line,
       reference_line_info,
       init_s[0], init_s[0] + FLAGS_decision_horizon,
-      0.0, FLAGS_trajectory_time_length);
+      0.0, FLAGS_trajectory_time_length, init_d);
+
+  double speed_limit =
+      reference_line_info->reference_line().GetSpeedLimitFromS(init_s[0]);
+  reference_line_info->SetCruiseSpeed(speed_limit);
 
   PlanningTarget planning_target = reference_line_info->planning_target();
   if (planning_target.has_stop_point()) {
@@ -231,6 +235,7 @@ Status LatticePlanner::PlanOnReferenceLine(
   std::size_t lat_jerk_failure_count = 0;
 
   std::size_t num_lattice_traj = 0;
+
   while (trajectory_evaluator.has_more_trajectory_pairs()) {
     double trajectory_pair_cost =
         trajectory_evaluator.top_trajectory_pair_cost();

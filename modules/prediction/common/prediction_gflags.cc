@@ -27,7 +27,7 @@ DEFINE_string(prediction_conf_file,
 DEFINE_string(prediction_adapter_config_filename,
               "modules/prediction/conf/adapter.conf",
               "Default conf file for prediction");
-DEFINE_string(prediction_data_file_prefix, "data/prediction/feature",
+DEFINE_string(prediction_data_dir, "data/prediction/",
               "Prefix of files to store feature data");
 DEFINE_bool(prediction_test_mode, false, "Set prediction to test mode");
 DEFINE_double(
@@ -36,6 +36,11 @@ DEFINE_double(
     "restrict the runtime duration.");
 
 DEFINE_bool(prediction_offline_mode, false, "Prediction offline mode");
+DEFINE_string(
+    prediction_offline_bags, "",
+    "a list of bag files or directories for offline mode. The items need to be "
+    "separated by colon ':'.  If this value is not set, the prediction module "
+    "will use the listen to published ros topic mode.");
 
 DEFINE_double(prediction_duration, 8.0, "Prediction duration (in seconds)");
 DEFINE_double(prediction_period, 0.1, "Prediction period (in seconds");
@@ -46,6 +51,8 @@ DEFINE_double(min_prediction_length, 20.0,
 // Bag replay timestamp gap
 DEFINE_double(replay_timestamp_gap, 10.0,
               "Max timestamp gap for rosbag replay");
+DEFINE_int32(max_num_dump_feature, 200000,
+             "Max number of features to dump");
 
 // Map
 DEFINE_double(lane_search_radius, 3.0, "Search radius for a candidate lane");

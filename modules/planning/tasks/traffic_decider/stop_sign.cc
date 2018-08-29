@@ -29,10 +29,11 @@
 
 #include "modules/common/time/time.h"
 #include "modules/common/util/util.h"
+#include "modules/common/vehicle_state/vehicle_state_provider.h"
 #include "modules/map/hdmap/hdmap_common.h"
 #include "modules/map/hdmap/hdmap_util.h"
 #include "modules/planning/common/frame.h"
-#include "modules/planning/common/planning_util.h"
+#include "modules/planning/common/planning_context.h"
 #include "modules/planning/tasks/traffic_decider/util.h"
 
 namespace apollo {
@@ -51,10 +52,8 @@ using apollo::hdmap::PathOverlap;
 using apollo::hdmap::StopSignInfo;
 using apollo::hdmap::StopSignInfoConstPtr;
 using apollo::perception::PerceptionObstacle;
-using apollo::planning::util::GetPlanningStatus;
 using StopSignLaneVehicles =
     std::unordered_map<std::string, std::vector<std::string>>;
-
 
 StopSign::StopSign(const TrafficRuleConfig& config) : TrafficRule(config) {}
 
@@ -283,7 +282,7 @@ bool StopSign::CheckCreepDone(ReferenceLineInfo* const reference_line_info) {
   if (distance < config_.stop_sign().creep().max_valid_stop_distance()) {
     bool all_far_away = true;
     for (auto* path_obstacle :
-        reference_line_info->path_decision()->path_obstacles().Items()) {
+         reference_line_info->path_decision()->path_obstacles().Items()) {
       if (path_obstacle->obstacle()->IsVirtual() ||
           !path_obstacle->obstacle()->IsStatic()) {
         continue;
@@ -354,16 +353,16 @@ int StopSign::ProcessStopStatus(ReferenceLineInfo* const reference_line_info,
         if (watch_vehicles != nullptr && !watch_vehicles->empty()) {
           stop_status_ = StopSignStatus::WAIT;
         } else {
-          stop_status_ = CheckCreep(stop_sign_info) ?
-              StopSignStatus::CREEP : StopSignStatus::STOP_DONE;
+          stop_status_ = CheckCreep(stop_sign_info) ? StopSignStatus::CREEP
+                                                    : StopSignStatus::STOP_DONE;
         }
       }
       break;
     case StopSignStatus::WAIT:
       if (wait_time > config_.stop_sign().wait_timeout() ||
           (watch_vehicles == nullptr || watch_vehicles->empty())) {
-        stop_status_ = CheckCreep(stop_sign_info) ?
-            StopSignStatus::CREEP : StopSignStatus::STOP_DONE;
+        stop_status_ = CheckCreep(stop_sign_info) ? StopSignStatus::CREEP
+                                                  : StopSignStatus::STOP_DONE;
       }
       break;
     case StopSignStatus::CREEP:
@@ -390,7 +389,8 @@ int StopSign::ProcessStopStatus(ReferenceLineInfo* const reference_line_info,
 bool StopSign::CheckADCkStop(ReferenceLineInfo* const reference_line_info) {
   CHECK_NOTNULL(reference_line_info);
 
-  double adc_speed = reference_line_info->AdcPlanningPoint().v();
+  double adc_speed =
+      common::VehicleStateProvider::instance()->linear_velocity();
   if (adc_speed > config_.stop_sign().max_stop_speed()) {
     ADEBUG << "ADC not stopped: speed[" << adc_speed << "]";
     return false;
@@ -420,8 +420,8 @@ bool StopSign::CheckADCkStop(ReferenceLineInfo* const reference_line_info) {
 /**
  * @brief: read watch vehicles from PlanningStatus
  */
-int StopSign::GetWatchVehicles(const StopSignInfo& stop_sign_info,
-                               StopSignLaneVehicles* watch_vehicles) {
+void StopSign::GetWatchVehicles(const StopSignInfo& stop_sign_info,
+                                StopSignLaneVehicles* watch_vehicles) {
   CHECK_NOTNULL(watch_vehicles);
 
   watch_vehicles->clear();
@@ -439,14 +439,12 @@ int StopSign::GetWatchVehicles(const StopSignInfo& stop_sign_info,
     ADEBUG << "GetWatchVehicles watch_vehicles: lane_id[" << associated_lane_id
            << "] vehicle[" << s << "]";
   }
-
-  return 0;
 }
 
 /**
  * @brief: update PlanningStatus with watch vehicles
  */
-int StopSign::UpdateWatchVehicles(StopSignLaneVehicles* watch_vehicles) {
+void StopSign::UpdateWatchVehicles(StopSignLaneVehicles* watch_vehicles) {
   CHECK_NOTNULL(watch_vehicles);
 
   auto* stop_sign_status = GetPlanningStatus()->mutable_stop_sign();
@@ -464,8 +462,6 @@ int StopSign::UpdateWatchVehicles(StopSignLaneVehicles* watch_vehicles) {
     ADEBUG << "UpdateWatchVehicles watch_vehicles: lane_id[" << it->first
            << "] vehicle[" << s << "]";
   }
-
-  return 0;
 }
 
 /**

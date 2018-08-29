@@ -25,7 +25,7 @@
 #include "modules/common/adapters/adapter_manager.h"
 #include "modules/common/time/time.h"
 #include "modules/common/vehicle_state/vehicle_state_provider.h"
-#include "modules/planning/common/planning_util.h"
+#include "modules/planning/common/planning_context.h"
 
 namespace apollo {
 namespace planning {
@@ -35,7 +35,6 @@ using apollo::common::adapter::AdapterManager;
 using apollo::common::time::Clock;
 using apollo::perception::TrafficLight;
 using apollo::perception::TrafficLightDetection;
-using apollo::planning::util::GetPlanningStatus;
 
 Rerouting::Rerouting(const TrafficRuleConfig& config) : TrafficRule(config) {}
 
@@ -69,7 +68,7 @@ bool Rerouting::ChangeLaneFailRerouting() {
     AERROR << "Failed to project point: " << point.ShortDebugString();
     return false;
   }
-  if (!reference_line.IsOnRoad(sl_point)) {
+  if (!reference_line.IsOnLane(sl_point)) {
     return true;
   }
   // 5. If the end of current passage region is further than kPrepareRoutingTime
