@@ -50,6 +50,7 @@ namespace planning {
  */
 class ReferenceLineInfo {
  public:
+  ReferenceLineInfo() = default;
   explicit ReferenceLineInfo(const common::VehicleState& vehicle_state,
                              const common::TrajectoryPoint& adc_planning_point,
                              const ReferenceLine& reference_line,
@@ -66,7 +67,6 @@ class ReferenceLineInfo {
   PathDecision* path_decision();
   const PathDecision& path_decision() const;
   const ReferenceLine& reference_line() const;
-  const common::TrajectoryPoint& AdcPlanningPoint() const;
 
   bool ReachedDestination() const;
 
@@ -109,6 +109,7 @@ class ReferenceLineInfo {
       DiscretizedTrajectory* discretized_trajectory);
 
   const SLBoundary& AdcSlBoundary() const;
+  const SLBoundary& VehicleSlBoundary() const;
   std::string PathSpeedDebugString() const;
 
   /**
@@ -158,6 +159,15 @@ class ReferenceLineInfo {
 
   void SetPriority(uint32_t priority) { reference_line_.SetPriority(priority); }
 
+  void set_trajectory_type(
+      const ADCTrajectory::TrajectoryType trajectory_type) {
+    trajectory_type_ = trajectory_type;
+  }
+
+  ADCTrajectory::TrajectoryType trajectory_type() const {
+    return trajectory_type_;
+  }
+
  private:
   bool CheckChangeLane() const;
 
@@ -191,7 +201,18 @@ class ReferenceLineInfo {
 
   DiscretizedTrajectory discretized_trajectory_;
 
-  SLBoundary adc_sl_boundary_;
+  struct {
+    /**
+     * @brief SL boundary of stitching point (starting point of plan trajectory)
+     * relative to the reference line
+     */
+    SLBoundary adc_sl_boundary_;
+    /**
+     * @brief SL boundary of vehicle realtime state relative to the reference
+     * line
+     */
+    SLBoundary vehicle_sl_boundary_;
+  } sl_boundary_info_;
 
   planning_internal::Debug debug_;
   LatencyStats latency_stats_;
@@ -209,6 +230,8 @@ class ReferenceLineInfo {
   double priority_cost_ = 0.0;
 
   PlanningTarget planning_target_;
+
+  ADCTrajectory::TrajectoryType trajectory_type_ = ADCTrajectory::UNKNOWN;
 
   DISALLOW_COPY_AND_ASSIGN(ReferenceLineInfo);
 };

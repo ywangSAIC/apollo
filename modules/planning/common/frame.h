@@ -124,8 +124,7 @@ class Frame {
 
   /**
    * Find an obstacle that collides with ADC (Autonomous Driving Car) if
-   * such
-   * obstacle exists.
+   * such obstacle exists.
    * @return pointer to the obstacle if such obstacle exists, otherwise
    * @return false if no colliding obstacle.
    */
@@ -143,7 +142,7 @@ class Frame {
   uint32_t sequence_num_ = 0;
   const hdmap::HDMap *hdmap_ = nullptr;
   common::TrajectoryPoint planning_start_point_;
-  const double start_time_;
+  const double start_time_ = 0.0;
   common::VehicleState vehicle_state_;
   std::list<ReferenceLineInfo> reference_line_info_;
   bool is_near_destination_ = false;
